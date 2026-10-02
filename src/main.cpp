@@ -5,6 +5,7 @@
 #include <Geode/utils/file.hpp>
 #include <Geode/utils/async.hpp>
 #include <filesystem>
+#include <optional>
 #include <cmath>
 #include <vector>
 
@@ -141,7 +142,7 @@ class TapPopup : public Popup {
 protected:
     ButtonSprite* m_shapeSpr = nullptr;
     CCLabelBMFont* m_valueLabels[4] = {};
-    async::TaskHolder<Result<std::filesystem::path>> m_pickHolder;
+    async::TaskHolder<Result<std::optional<std::filesystem::path>>> m_pickHolder;
 
     void addSlider(CCMenu*, char const* name, int tag, float y, float norm) {
         auto label = CCLabelBMFont::create(name, "bigFont.fnt");
@@ -242,12 +243,14 @@ protected:
         file::FilePickOptions opts;
         opts.filters.push_back({"Images", {"*.png", "*.jpg", "*.jpeg"}});
 
-        m_pickHolder.spawn(file::pick(file::PickMode::OpenFile, opts), [](Result<std::filesystem::path> res) {
+        m_pickHolder.spawn(file::pick(file::PickMode::OpenFile, opts), [](Result<std::optional<std::filesystem::path>> res) {
             if (!res.isOk()) {
                 FLAlertLayer::create("Error", "Couldn't pick that image.", "OK")->show();
                 return;
             }
-            auto src = res.unwrap();
+            auto picked = res.unwrap();
+            if (!picked.has_value()) return; // user cancelled
+            auto src = *picked;
             auto dst = Mod::get()->getSaveDir() / ("tap-image" + src.extension().string());
 
             std::error_code ec;
@@ -292,11 +295,11 @@ class $modify(TapPause, PauseLayer) {
             menu->addChild(btn);
             menu->updateLayout();
         } else {
-            auto menu = CCMenu::create();
+            auto fallback = CCMenu::create();
             auto win = CCDirector::get()->getWinSize();
-            menu->setPosition({win.width - 30.f, win.height / 2.f});
-            menu->addChild(btn);
-            this->addChild(menu);
+            fallback->setPosition({win.width - 30.f, win.height / 2.f});
+            fallback->addChild(btn);
+            this->addChild(fallback);
         }
     }
 
