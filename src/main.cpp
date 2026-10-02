@@ -2,6 +2,7 @@
 #include <Geode/modify/CCTouchDispatcher.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/ui/Popup.hpp>
+#include <Geode/ui/ColorPickPopup.hpp>
 #include <Geode/utils/file.hpp>
 #include <Geode/utils/async.hpp>
 #include <filesystem>
@@ -14,40 +15,39 @@
 using namespace geode::prelude;
 
 // ---------- saved settings ----------
+static ccColor4B loadCol(std::string const& key, ccColor4B def) {
+    auto m = Mod::get();
+    auto g = [&](char const* ch, int d) {
+        return static_cast<GLubyte>(std::clamp(m->getSavedValue<int>(key + ch, d), 0, 255));
+    };
+    return ccc4(g("-r", def.r), g("-g", def.g), g("-b", def.b), g("-a", def.a));
+}
+
+static void saveCol(std::string const& key, ccColor4B c) {
+    auto m = Mod::get();
+    m->setSavedValue<int>(key + "-r", c.r);
+    m->setSavedValue<int>(key + "-g", c.g);
+    m->setSavedValue<int>(key + "-b", c.b);
+    m->setSavedValue<int>(key + "-a", c.a);
+}
+
 namespace cfg {
     inline float size()        { return Mod::get()->getSavedValue<float>("size", 1.5f); }
-    inline float outlineW()    { return Mod::get()->getSavedValue<float>("outline-width", 2.f); }
-    inline float outlineOp()   { return Mod::get()->getSavedValue<float>("outline-opacity", 1.f); }
-    inline float fillOp()      { return Mod::get()->getSavedValue<float>("fill-opacity", 0.4f); }
+    inline float outlineW()    { return Mod::get()->getSavedValue<float>("outline-width", 3.f); }
     inline int   shape()       { return Mod::get()->getSavedValue<int>("shape", 0); }
-    inline int   fillColor()   { return Mod::get()->getSavedValue<int>("fill-color", 0); }
-    inline int   outlineColor(){ return Mod::get()->getSavedValue<int>("outline-color", 0); }
     inline bool  useImage()    { return Mod::get()->getSavedValue<bool>("use-image", false); }
     inline std::string image() { return Mod::get()->getSavedValue<std::string>("image-path", ""); }
+    inline ccColor4B fill()    { return loadCol("fill", ccc4(255, 255, 255, 100)); }
+    inline ccColor4B outline() { return loadCol("outline", ccc4(255, 255, 255, 255)); }
 }
 
 static const char* SHAPE_NAMES[] = {"Circle", "Square", "Triangle", "Pentagon", "Hexagon", "Diamond"};
 static const int SHAPE_COUNT = 6;
 
-struct NamedColor { const char* name; float r, g, b; };
-static const NamedColor COLORS[] = {
-    {"White",  1.f,  1.f,   1.f},
-    {"Red",    1.f,  0.2f,  0.2f},
-    {"Orange", 1.f,  0.6f,  0.1f},
-    {"Yellow", 1.f,  0.95f, 0.2f},
-    {"Green",  0.2f, 1.f,   0.3f},
-    {"Cyan",   0.2f, 0.9f,  1.f},
-    {"Blue",   0.25f,0.4f,  1.f},
-    {"Purple", 0.65f,0.3f,  1.f},
-    {"Pink",   1.f,  0.45f, 0.8f},
-    {"Black",  0.f,  0.f,   0.f},
-};
-static const int COLOR_COUNT = 10;
-
 // cocos2d's CCDrawNode uses premultiplied alpha, so colors must be multiplied by alpha
-static ccColor4F pm(int idx, float a) {
-    auto& c = COLORS[idx];
-    return ccc4f(c.r * a, c.g * a, c.b * a, a);
+static ccColor4F pmc(ccColor4B c) {
+    float a = c.a / 255.f;
+    return ccc4f(c.r / 255.f * a, c.g / 255.f * a, c.b / 255.f * a, a);
 }
 
 static std::vector<CCPoint> shapePoints(int shape, float r) {
@@ -60,13 +60,13 @@ static std::vector<CCPoint> shapePoints(int shape, float r) {
     };
     const float PI = 3.14159265f;
     switch (shape) {
-        case 0: poly(40, 0); break;
+        case 0: poly(72, 0); break;
         case 1: poly(4, PI / 4); break;
         case 2: poly(3, PI / 2); break;
         case 3: poly(5, PI / 2); break;
         case 4: poly(6, 0); break;
         case 5: poly(4, 0); break;
-        default: poly(40, 0);
+        default: poly(72, 0);
     }
     return p;
 }
@@ -97,37 +97,31 @@ protected:
 
     void redraw() {
         float pop = std::min(1.f, 0.6f + 0.4f * (m_t / POP));
+        auto fill = cfg::fill();
 
         if (m_img) {
             CCSize cs = m_img->getContentSize();
             float maxSide = std::max(cs.width, cs.height);
             if (maxSide < 1.f) maxSide = 1.f;
             m_img->setScale((40.f * cfg::size() * pop) / maxSide);
-            m_img->setOpacity(static_cast<GLubyte>(255.f * cfg::fillOp()));
+            m_img->setOpacity(fill.a);
             return;
         }
 
         float r = 18.f * cfg::size() * pop;
         auto pts = shapePoints(cfg::shape(), r);
         float ow = cfg::outlineW();
-        float oa = cfg::outlineOp();
+        auto out = cfg::outline();
+        bool hasOutline = ow > 0.05f && out.a > 0;
 
+        // one smooth, anti-aliased pass: fill + mitered outline
         m_draw->clear();
-        // fill (no built-in border, we draw our own outline below)
         m_draw->drawPolygon(
             pts.data(), static_cast<unsigned int>(pts.size()),
-            pm(cfg::fillColor(), cfg::fillOp()),
-            0.f,
-            ccc4f(0.f, 0.f, 0.f, 0.f)
+            pmc(fill),
+            hasOutline ? ow : 0.f,
+            hasOutline ? pmc(out) : ccc4f(0.f, 0.f, 0.f, 0.f)
         );
-        // outline
-        if (ow > 0.05f && oa > 0.f) {
-            auto col = pm(cfg::outlineColor(), oa);
-            size_t n = pts.size();
-            for (size_t i = 0; i < n; i++) {
-                m_draw->drawSegment(pts[i], pts[(i + 1) % n], ow * 0.5f, col);
-            }
-        }
     }
 
 public:
@@ -202,9 +196,9 @@ class $modify(TapDispatcher, CCTouchDispatcher) {
 class TapPopup : public Popup {
 protected:
     ButtonSprite* m_shapeSpr = nullptr;
-    ButtonSprite* m_fillSpr = nullptr;
-    ButtonSprite* m_outSpr = nullptr;
-    CCLabelBMFont* m_valueLabels[4] = {};
+    CCLayerColor* m_fillSwatch = nullptr;
+    CCLayerColor* m_outSwatch = nullptr;
+    CCLabelBMFont* m_valueLabels[2] = {};
     async::TaskHolder<Result<std::optional<std::filesystem::path>>> m_pickHolder;
 
     void addSlider(char const* name, int tag, float y, float norm) {
@@ -235,15 +229,29 @@ protected:
         m_mainLayer->addChild(l);
     }
 
+    CCLayerColor* addSwatch(float x, float y) {
+        auto sw = CCLayerColor::create(ccc4(255, 255, 255, 255), 44.f, 12.f);
+        sw->ignoreAnchorPointForPosition(false);
+        sw->setAnchorPoint({0.5f, 0.5f});
+        sw->setPosition({x, y});
+        m_mainLayer->addChild(sw);
+        return sw;
+    }
+
     void refreshLabels() {
         m_valueLabels[0]->setString(fmt::format("{:.1f}x", cfg::size()).c_str());
         m_valueLabels[1]->setString(fmt::format("{:.1f}", cfg::outlineW()).c_str());
-        m_valueLabels[2]->setString(fmt::format("{}%", static_cast<int>(cfg::outlineOp() * 100)).c_str());
-        m_valueLabels[3]->setString(fmt::format("{}%", static_cast<int>(cfg::fillOp() * 100)).c_str());
+    }
+
+    void refreshSwatches() {
+        auto f = cfg::fill();
+        auto o = cfg::outline();
+        m_fillSwatch->setColor(ccc3(f.r, f.g, f.b));
+        m_outSwatch->setColor(ccc3(o.r, o.g, o.b));
     }
 
     bool init() {
-        if (!Popup::init(320.f, 285.f)) return false;
+        if (!Popup::init(320.f, 255.f)) return false;
         this->setTitle("Tap Settings");
 
         auto menu = CCMenu::create();
@@ -251,48 +259,50 @@ protected:
         m_mainLayer->addChild(menu);
 
         // sliders (normalised 0..1)
-        this->addSlider("Size",            0, 240.f, (cfg::size() - 0.3f) / 3.7f);
-        this->addSlider("Outline Width",   1, 212.f, cfg::outlineW() / 10.f);
-        this->addSlider("Outline Opacity", 2, 184.f, cfg::outlineOp());
-        this->addSlider("Fill Opacity",    3, 156.f, cfg::fillOp());
+        this->addSlider("Size",          0, 205.f, (cfg::size() - 0.3f) / 3.7f);
+        this->addSlider("Outline Width", 1, 177.f, cfg::outlineW() / 10.f);
         this->refreshLabels();
 
-        // shape / fill color / outline color buttons
-        this->addCaption("Shape", 57.f, 132.f);
-        this->addCaption("Fill Color", 160.f, 132.f);
-        this->addCaption("Outline Color", 263.f, 132.f);
+        // shape / fill color / outline color
+        this->addCaption("Shape", 57.f, 143.f);
+        this->addCaption("Fill Color", 160.f, 143.f);
+        this->addCaption("Outline Color", 263.f, 143.f);
 
         m_shapeSpr = ButtonSprite::create(SHAPE_NAMES[cfg::shape()], 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
         auto shapeBtn = CCMenuItemSpriteExtra::create(m_shapeSpr, this, menu_selector(TapPopup::onShape));
-        shapeBtn->setPosition({57.f, 108.f});
+        shapeBtn->setPosition({57.f, 119.f});
         menu->addChild(shapeBtn);
 
-        m_fillSpr = ButtonSprite::create(COLORS[cfg::fillColor()].name, 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
-        auto fillBtn = CCMenuItemSpriteExtra::create(m_fillSpr, this, menu_selector(TapPopup::onFillColor));
-        fillBtn->setPosition({160.f, 108.f});
+        auto fillSpr = ButtonSprite::create("Pick", 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
+        auto fillBtn = CCMenuItemSpriteExtra::create(fillSpr, this, menu_selector(TapPopup::onFillColor));
+        fillBtn->setPosition({160.f, 119.f});
         menu->addChild(fillBtn);
 
-        m_outSpr = ButtonSprite::create(COLORS[cfg::outlineColor()].name, 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
-        auto outBtn = CCMenuItemSpriteExtra::create(m_outSpr, this, menu_selector(TapPopup::onOutlineColor));
-        outBtn->setPosition({263.f, 108.f});
+        auto outSpr = ButtonSprite::create("Pick", 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
+        auto outBtn = CCMenuItemSpriteExtra::create(outSpr, this, menu_selector(TapPopup::onOutlineColor));
+        outBtn->setPosition({263.f, 119.f});
         menu->addChild(outBtn);
+
+        m_fillSwatch = this->addSwatch(160.f, 92.f);
+        m_outSwatch = this->addSwatch(263.f, 92.f);
+        this->refreshSwatches();
 
         // use-image toggle
         auto toggler = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(TapPopup::onUseImage), 0.7f);
         toggler->toggle(cfg::useImage());
-        toggler->setPosition({30.f, 62.f});
+        toggler->setPosition({30.f, 45.f});
         menu->addChild(toggler);
 
         auto imgLabel = CCLabelBMFont::create("Use Image", "bigFont.fnt");
         imgLabel->setScale(0.4f);
         imgLabel->setAnchorPoint({0.f, 0.5f});
-        imgLabel->setPosition({52.f, 62.f});
+        imgLabel->setPosition({52.f, 45.f});
         m_mainLayer->addChild(imgLabel);
 
         // pick image button
         auto pickSpr = ButtonSprite::create("Pick Image", 110, true, "bigFont.fnt", "GJ_button_01.png", 30.f, 0.6f);
         auto pickBtn = CCMenuItemSpriteExtra::create(pickSpr, this, menu_selector(TapPopup::onPick));
-        pickBtn->setPosition({245.f, 62.f});
+        pickBtn->setPosition({245.f, 45.f});
         menu->addChild(pickBtn);
 
         return true;
@@ -305,8 +315,6 @@ protected:
         switch (thumb->getTag()) {
             case 0: mod->setSavedValue<float>("size", 0.3f + v * 3.7f); break;
             case 1: mod->setSavedValue<float>("outline-width", v * 10.f); break;
-            case 2: mod->setSavedValue<float>("outline-opacity", v); break;
-            case 3: mod->setSavedValue<float>("fill-opacity", v); break;
         }
         this->refreshLabels();
     }
@@ -317,17 +325,20 @@ protected:
         m_shapeSpr->setString(SHAPE_NAMES[next]);
     }
 
-    void onFillColor(CCObject*) {
-        int next = (cfg::fillColor() + 1) % COLOR_COUNT;
-        Mod::get()->setSavedValue<int>("fill-color", next);
-        m_fillSpr->setString(COLORS[next].name);
+    void openPicker(bool isFill) {
+        auto current = isFill ? cfg::fill() : cfg::outline();
+        auto popup = ColorPickPopup::create(current, true);
+        if (!popup) return;
+        Ref<TapPopup> self = this;
+        popup->setCallback([self, isFill](ccColor4B const& c) {
+            saveCol(isFill ? "fill" : "outline", c);
+            self->refreshSwatches();
+        });
+        popup->show();
     }
 
-    void onOutlineColor(CCObject*) {
-        int next = (cfg::outlineColor() + 1) % COLOR_COUNT;
-        Mod::get()->setSavedValue<int>("outline-color", next);
-        m_outSpr->setString(COLORS[next].name);
-    }
+    void onFillColor(CCObject*) { this->openPicker(true); }
+    void onOutlineColor(CCObject*) { this->openPicker(false); }
 
     void onUseImage(CCObject* sender) {
         // GD toggler quirk: isToggled() is the OLD state inside the callback
