@@ -327,7 +327,7 @@ protected:
 
     void openPicker(bool isFill) {
         auto current = isFill ? cfg::fill() : cfg::outline();
-        auto popup = ColorPickPopup::create(current, true);
+        auto popup = ColorPickPopup::create(current);
         if (!popup) return;
         Ref<TapPopup> self = this;
         popup->setCallback([self, isFill](ccColor4B const& c) {
