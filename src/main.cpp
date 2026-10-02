@@ -196,51 +196,26 @@ class $modify(TapDispatcher, CCTouchDispatcher) {
 class TapPopup : public Popup {
 protected:
     ButtonSprite* m_shapeSpr = nullptr;
-    CCLayerColor* m_fillSwatch = nullptr;
-    CCLayerColor* m_outSwatch = nullptr;
-    CCLabelBMFont* m_valueLabels[2] = {};
+    ColorChannelSprite* m_fillSwatch = nullptr;
+    ColorChannelSprite* m_outSwatch = nullptr;
     async::TaskHolder<Result<std::optional<std::filesystem::path>>> m_pickHolder;
 
-    void addSlider(char const* name, int tag, float y, float norm) {
-        auto label = CCLabelBMFont::create(name, "bigFont.fnt");
-        label->setScale(0.4f);
-        label->setAnchorPoint({0.f, 0.5f});
-        label->setPosition({15.f, y});
-        m_mainLayer->addChild(label);
-
-        auto slider = Slider::create(this, menu_selector(TapPopup::onSlider), 0.5f);
-        slider->setPosition({205.f, y});
-        slider->setValue(norm);
-        slider->getThumb()->setTag(tag);
-        m_mainLayer->addChild(slider);
-
-        auto val = CCLabelBMFont::create("", "bigFont.fnt");
-        val->setScale(0.35f);
-        val->setAnchorPoint({1.f, 0.5f});
-        val->setPosition({310.f, y});
-        m_mainLayer->addChild(val);
-        m_valueLabels[tag] = val;
-    }
-
-    void addCaption(char const* text, float x, float y) {
+    void addLabel(char const* text, float x, float y, float scale, bool centered) {
         auto l = CCLabelBMFont::create(text, "bigFont.fnt");
-        l->setScale(0.32f);
+        l->setScale(scale);
+        if (!centered) l->setAnchorPoint({0.f, 0.5f});
         l->setPosition({x, y});
         m_mainLayer->addChild(l);
     }
 
-    CCLayerColor* addSwatch(float x, float y) {
-        auto sw = CCLayerColor::create(ccc4(255, 255, 255, 255), 44.f, 12.f);
-        sw->ignoreAnchorPointForPosition(false);
-        sw->setAnchorPoint({0.5f, 0.5f});
-        sw->setPosition({x, y});
-        m_mainLayer->addChild(sw);
-        return sw;
-    }
+    void addSlider(char const* name, int tag, float y, float norm) {
+        this->addLabel(name, 16.f, y, 0.45f, false);
 
-    void refreshLabels() {
-        m_valueLabels[0]->setString(fmt::format("{:.1f}x", cfg::size()).c_str());
-        m_valueLabels[1]->setString(fmt::format("{:.1f}", cfg::outlineW()).c_str());
+        auto slider = Slider::create(this, menu_selector(TapPopup::onSlider), 0.65f);
+        slider->setPosition({205.f, y});
+        slider->setValue(norm);
+        slider->getThumb()->setTag(tag);
+        m_mainLayer->addChild(slider);
     }
 
     void refreshSwatches() {
@@ -258,53 +233,44 @@ protected:
         menu->setPosition({0.f, 0.f});
         m_mainLayer->addChild(menu);
 
-        // sliders (normalised 0..1)
-        this->addSlider("Size",          0, 205.f, (cfg::size() - 0.3f) / 3.7f);
-        this->addSlider("Outline Width", 1, 177.f, cfg::outlineW() / 10.f);
-        this->refreshLabels();
+        // sliders
+        this->addSlider("Tap Size",      0, 205.f, (cfg::size() - 0.3f) / 3.7f);
+        this->addSlider("Outline Width", 1, 176.f, cfg::outlineW() / 10.f);
 
-        // shape / fill color / outline color
-        this->addCaption("Shape", 57.f, 143.f);
-        this->addCaption("Fill Color", 160.f, 143.f);
-        this->addCaption("Outline Color", 263.f, 143.f);
+        // row: shape | pick image | use-image checkbox
+        this->addLabel("Shape", 61.f, 157.f, 0.4f, true);
+        this->addLabel("Use Image", 295.f, 157.f, 0.32f, true);
 
-        m_shapeSpr = ButtonSprite::create(SHAPE_NAMES[cfg::shape()], 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
+        m_shapeSpr = ButtonSprite::create(SHAPE_NAMES[cfg::shape()], 88, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
         auto shapeBtn = CCMenuItemSpriteExtra::create(m_shapeSpr, this, menu_selector(TapPopup::onShape));
-        shapeBtn->setPosition({57.f, 119.f});
+        shapeBtn->setPosition({61.f, 132.f});
         menu->addChild(shapeBtn);
 
-        auto fillSpr = ButtonSprite::create("Pick", 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
-        auto fillBtn = CCMenuItemSpriteExtra::create(fillSpr, this, menu_selector(TapPopup::onFillColor));
-        fillBtn->setPosition({160.f, 119.f});
-        menu->addChild(fillBtn);
-
-        auto outSpr = ButtonSprite::create("Pick", 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, 0.6f);
-        auto outBtn = CCMenuItemSpriteExtra::create(outSpr, this, menu_selector(TapPopup::onOutlineColor));
-        outBtn->setPosition({263.f, 119.f});
-        menu->addChild(outBtn);
-
-        m_fillSwatch = this->addSwatch(160.f, 92.f);
-        m_outSwatch = this->addSwatch(263.f, 92.f);
-        this->refreshSwatches();
-
-        // use-image toggle
-        auto toggler = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(TapPopup::onUseImage), 0.7f);
-        toggler->toggle(cfg::useImage());
-        toggler->setPosition({30.f, 45.f});
-        menu->addChild(toggler);
-
-        auto imgLabel = CCLabelBMFont::create("Use Image", "bigFont.fnt");
-        imgLabel->setScale(0.4f);
-        imgLabel->setAnchorPoint({0.f, 0.5f});
-        imgLabel->setPosition({52.f, 45.f});
-        m_mainLayer->addChild(imgLabel);
-
-        // pick image button
-        auto pickSpr = ButtonSprite::create("Pick Image", 110, true, "bigFont.fnt", "GJ_button_01.png", 30.f, 0.6f);
+        auto pickSpr = ButtonSprite::create("Pick Image", 140, true, "bigFont.fnt", "GJ_button_01.png", 30.f, 0.6f);
         auto pickBtn = CCMenuItemSpriteExtra::create(pickSpr, this, menu_selector(TapPopup::onPick));
-        pickBtn->setPosition({245.f, 45.f});
+        pickBtn->setPosition({197.f, 132.f});
         menu->addChild(pickBtn);
 
+        auto toggler = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(TapPopup::onUseImage), 0.7f);
+        toggler->toggle(cfg::useImage());
+        toggler->setPosition({295.f, 132.f});
+        menu->addChild(toggler);
+
+        // fill color: swatch button + label
+        m_fillSwatch = ColorChannelSprite::create();
+        auto fillBtn = CCMenuItemSpriteExtra::create(m_fillSwatch, this, menu_selector(TapPopup::onFillColor));
+        fillBtn->setPosition({31.f, 96.f});
+        menu->addChild(fillBtn);
+        this->addLabel("Fill Color", 56.f, 96.f, 0.45f, false);
+
+        // outline color: swatch button + label
+        m_outSwatch = ColorChannelSprite::create();
+        auto outBtn = CCMenuItemSpriteExtra::create(m_outSwatch, this, menu_selector(TapPopup::onOutlineColor));
+        outBtn->setPosition({31.f, 49.f});
+        menu->addChild(outBtn);
+        this->addLabel("Outline Color", 56.f, 49.f, 0.45f, false);
+
+        this->refreshSwatches();
         return true;
     }
 
@@ -316,7 +282,6 @@ protected:
             case 0: mod->setSavedValue<float>("size", 0.3f + v * 3.7f); break;
             case 1: mod->setSavedValue<float>("outline-width", v * 10.f); break;
         }
-        this->refreshLabels();
     }
 
     void onShape(CCObject*) {
