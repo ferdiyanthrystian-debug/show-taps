@@ -1,0 +1,12 @@
+{
+    "geode": "5.10.1",
+    "gd": {
+        "android": "2.2081",
+        "ios": "2.2081"
+    },
+    "id": "nardhoo.show-taps",
+    "name": "Show Taps",
+    "version": "v1.1.0",
+    "developer": "nardhoo",
+    "description": "Shows a ripple wherever you tap. Customize it from the pause menu."
+}
